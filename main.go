@@ -1,27 +1,66 @@
 package main
 
 import (
+	"bytes"
+	_ "embed"
+	"image"
+	"image/color"
+	_ "image/png"
 	"fmt"
 	"log"
+	"math/rand"
+	"time"
+	"strconv"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/opentype"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/hajimehoshi/ebiten/v2/examples/resources/fonts"
+	"github.com/hajimehoshi/ebiten/v2/text"
 )
 
 const (
-	title   = "Mountain Hand Line Game"
-	debug   = true
-	screenX = 320
-	screenY = 480
+	title    = "Mountain Hand Line Game"
+	debug    = true
+	screenX  = 320
+	screenY  = 480
+
+	count    = 5
 )
 
 const (
 	// game mode
 	modeTitle    = iota
 	modeGame     = iota
-	modeGameover = iota
+	modeResult   = iota
 	modeHelp     = iota
+)
+
+var (
+	stations [30]Station
+	mplusNormalFont font.Face
+)
+
+//go:embed resources/images/yamanote_train.png
+var byteTrainImg []byte
+//go:embed resources/images/yamanote.png
+var byteYamanoteImg []byte
+//go:embed resources/images/reverce.png
+var byteReverceImg []byte
+//go:embed resources/images/kanban.png
+var byteKanbanImg []byte
+
+var (
+	trainImg *ebiten.Image
+	yamanoteImg *ebiten.Image
+	reverceImg *ebiten.Image
+	kanbanImg *ebiten.Image
+
+	ptime time.Time
+	atime time.Time
 )
 
 const (
@@ -68,8 +107,39 @@ type Station struct {
 	RequireTimeIn   int
 }
 
+func _makeImg(byteImg []byte) *ebiten.Image{
+	img, _, err := image.Decode(bytes.NewReader(byteImg))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return ebiten.NewImageFromImage(img)
+}
+
 func init() {
-	Stations := [...]Station{
+	rand.Seed(time.Now().UnixNano())
+
+
+	tt, err := opentype.Parse(fonts.MPlus1pRegular_ttf)
+	if err != nil {
+		log.Fatal(err)
+	}
+	const dpi = 72
+	mplusNormalFont, err = opentype.NewFace(tt, &opentype.FaceOptions{
+		Size:    20,
+		DPI:     dpi,
+		Hinting: font.HintingVertical,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	trainImg    = _makeImg(byteTrainImg)
+	yamanoteImg = _makeImg(byteYamanoteImg)
+	reverceImg  = _makeImg(byteReverceImg)
+	kanbanImg   = _makeImg(byteKanbanImg)
+
+	stations = [...]Station{
 		Station{"新宿",             "shinjuku",         shinOkubo,       2, yoyogi,          2},
 		Station{"新大久保",         "shin-okubo",       takadanobaba,    2, shinjuku,        2},
 		Station{"高田馬場",         "takadanobaba",     mejiro,          2, shinOkubo,       2},
@@ -103,40 +173,29 @@ func init() {
 	}
 
 	// sinjuku -> ueno
-	var sumIn int = 0
-	var sumOut int = 0
-	start := shinjuku
-	goal := ueno
-
-	// In
-	tmpStation := Stations[start]
-	for {
-		sumIn += tmpStation.RequireTimeIn
-		tmpStation = Stations[tmpStation.NextStationIdIn]
-
-		if tmpStation.Name == Stations[goal].Name {
-			break
-		}
-	}
-
-	// Out
-	tmpStation = Stations[start]
-	for {
-		sumOut += tmpStation.RequireTimeOut
-		tmpStation = Stations[tmpStation.NextStationIdOut]
-
-		if tmpStation.Name == Stations[goal].Name {
-			break
-		}
-	}
-
-	fmt.Println(sumIn)
-	fmt.Println(sumOut)
 }
 
 // Game Main
 type Game struct {
 	mode int
+	counter int
+	
+	direction int
+
+	from int
+	to int
+
+	inSum int
+	outSum int
+
+	state int
+}
+
+func (g *Game) Init() {
+	g.inSum   = 0
+	g.outSum  = 0
+	g.counter = 0
+	g.state   = 0
 }
 
 func (g *Game) Update() error {
@@ -145,24 +204,113 @@ func (g *Game) Update() error {
 	case modeTitle:
 		if g.isKeyJustPressed(ebiten.KeySpace) {
 			g.mode = modeGame
+			g.Init()
+
+		} else if g.isKeyJustPressed(ebiten.KeyH) {
+			g.mode = modeHelp
 		}
 	case modeGame:
 
-	case modeGameover:
+		if g.state == 0 {
+			g.from = rand.Intn(len(stations))
+			g.to   = rand.Intn(len(stations))
+
+			if g.isKeyJustPressed(ebiten.KeySpace) {
+				g.state = 1
+				ptime = time.Now()
+
+				// In
+				tmpStation := stations[g.from]
+				for {
+					g.inSum += tmpStation.RequireTimeIn
+					tmpStation = stations[tmpStation.NextStationIdIn]
+
+					if tmpStation.Name == stations[g.to].Name {
+						break
+					}
+				}
+
+				// Out
+				tmpStation = stations[g.from]
+				for {
+					g.outSum += tmpStation.RequireTimeOut
+					tmpStation = stations[tmpStation.NextStationIdOut]
+
+					if tmpStation.Name == stations[g.to].Name {
+						break
+					}
+				}
+			}
+
+		} else {
+			atime = time.Now()
+			g.counter = int((atime.UnixNano() - ptime.UnixNano()) / int64(time.Second))
+			if g.counter > 5 {
+				g.mode = modeResult
+			}
+		}
+
+	case modeResult:
+		if g.isKeyJustPressed(ebiten.KeyEscape) {
+			g.mode = modeTitle
+		}
 
 	case modeHelp:
-
+		if g.isKeyJustPressed(ebiten.KeyEscape) {
+			g.mode = modeTitle
+		}
 	}
 
 	return nil
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
+	op := &ebiten.DrawImageOptions{}
+	op.Filter = ebiten.FilterLinear
+
+	// タイトル画面と結果画面での表示
+	switch g.mode {
+	case modeTitle:
+		screen.DrawImage(reverceImg, op)
+
+	case modeGame:
+		op.GeoM.Translate(0, 80)
+		screen.DrawImage(kanbanImg, op)
+
+		op.GeoM.Translate(170, 0)
+		screen.DrawImage(kanbanImg, op)
+
+		text.Draw(screen, stations[g.from].Name, mplusNormalFont, 20, 120, color.Black)
+		text.Draw(screen, stations[g.to].Name,   mplusNormalFont, 200, 120, color.Black)
+
+		op = &ebiten.DrawImageOptions{}
+		op.Filter = ebiten.FilterLinear
+
+		op.GeoM.Translate(150, 250)
+		screen.DrawImage(trainImg, op)
+
+		text.Draw(screen, strconv.Itoa((count - g.counter)),  mplusNormalFont, 0, 240, color.White)
+	case modeResult:
+		
+	case modeHelp:
+		op.GeoM.Translate(0, 0)
+		screen.DrawImage(yamanoteImg, op)
+
+		op.GeoM.Translate(0, 200)
+		screen.DrawImage(trainImg, op)
+
+		text.Draw(screen, "hoge", mplusNormalFont, 0, 80, color.White)
+	}
+
+
 	if debug {
 		ebitenutil.DebugPrint(screen, fmt.Sprintf(
 			"GameMode: %d\n",
 			g.mode,
 		))
+
+		text.Draw(screen, strconv.Itoa(g.inSum), mplusNormalFont, 100, 80, color.White)
+		text.Draw(screen, strconv.Itoa(g.outSum),   mplusNormalFont, 100, 160, color.White)
 	}
 }
 
