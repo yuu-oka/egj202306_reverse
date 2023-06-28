@@ -24,11 +24,11 @@ import (
 
 const (
 	title    = "Mountain Hand Line Game"
-	debug    = true
+	debug    = false
 	screenX  = 320
 	screenY  = 480
 
-	count    = 5
+	count    = 5000
 )
 
 const (
@@ -48,16 +48,19 @@ var (
 var byteTrainImg []byte
 //go:embed resources/images/yamanote.png
 var byteYamanoteImg []byte
-//go:embed resources/images/reverce.png
+//go:embed resources/images/reverse.png
 var byteReverceImg []byte
 //go:embed resources/images/kanban.png
 var byteKanbanImg []byte
+//go:embed resources/images/train_rail.png
+var byteTrainRailImg []byte
 
 var (
-	trainImg *ebiten.Image
-	yamanoteImg *ebiten.Image
-	reverceImg *ebiten.Image
-	kanbanImg *ebiten.Image
+	trainImg     *ebiten.Image
+	yamanoteImg  *ebiten.Image
+	reverceImg   *ebiten.Image
+	kanbanImg    *ebiten.Image
+	trainRailImg *ebiten.Image
 
 	ptime time.Time
 	atime time.Time
@@ -134,10 +137,11 @@ func init() {
 		log.Fatal(err)
 	}
 
-	trainImg    = _makeImg(byteTrainImg)
-	yamanoteImg = _makeImg(byteYamanoteImg)
-	reverceImg  = _makeImg(byteReverceImg)
-	kanbanImg   = _makeImg(byteKanbanImg)
+	trainImg     = _makeImg(byteTrainImg)
+	yamanoteImg  = _makeImg(byteYamanoteImg)
+	reverceImg   = _makeImg(byteReverceImg)
+	kanbanImg    = _makeImg(byteKanbanImg)
+	trainRailImg = _makeImg(byteTrainRailImg)
 
 	stations = [...]Station{
 		Station{"新宿",             "shinjuku",         shinOkubo,       2, yoyogi,          2},
@@ -243,9 +247,17 @@ func (g *Game) Update() error {
 			}
 
 		} else {
+			if g.isKeyJustPressed(ebiten.KeySpace) {
+				if g.direction == 1 {
+					g.direction = 0
+				} else {
+					g.direction = 1
+				}
+			}
+
 			atime = time.Now()
-			g.counter = int((atime.UnixNano() - ptime.UnixNano()) / int64(time.Second))
-			if g.counter > 5 {
+			g.counter = int((atime.UnixNano() - ptime.UnixNano()) / int64(time.Millisecond))
+			if g.counter > count {
 				g.mode = modeResult
 			}
 		}
@@ -271,27 +283,69 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	// タイトル画面と結果画面での表示
 	switch g.mode {
 	case modeTitle:
-		screen.DrawImage(reverceImg, op)
+		g.drawTitle(screen)
 
 	case modeGame:
-		op.GeoM.Translate(0, 80)
-		screen.DrawImage(kanbanImg, op)
+		text.Draw(screen, "内回り線と外回り線",  mplusNormalFont, 20, 30, color.White)
+		text.Draw(screen, "先に到着する路線を選んでね",  mplusNormalFont, 20, 60, color.White)
+		text.Draw(screen, "から",  mplusNormalFont, 100, 190, color.White)
+		text.Draw(screen, "まで",  mplusNormalFont, 270, 190, color.White)
 
-		op.GeoM.Translate(170, 0)
-		screen.DrawImage(kanbanImg, op)
+		// 看板
+		g.drawKanban(screen)
+		// 駅名
+		g.drawStationNames(screen)
+		// 線路
+		g.drawTrainRail(screen)
 
-		text.Draw(screen, stations[g.from].Name, mplusNormalFont, 20, 120, color.Black)
-		text.Draw(screen, stations[g.to].Name,   mplusNormalFont, 200, 120, color.Black)
 
-		op = &ebiten.DrawImageOptions{}
-		op.Filter = ebiten.FilterLinear
+		if g.state == 0 {
+			text.Draw(screen, "spaceキーで駅決定",  mplusNormalFont, 50, 470, color.White)
 
-		op.GeoM.Translate(150, 250)
-		screen.DrawImage(trainImg, op)
+		} else {
+			text.Draw(screen, "spaceキーで向き反転",  mplusNormalFont, 50, 470, color.White)
+			// 電車
+			g.drawTrain(screen)
+			g.drawReverse(screen)
+		}
 
-		text.Draw(screen, strconv.Itoa((count - g.counter)),  mplusNormalFont, 0, 240, color.White)
 	case modeResult:
 		
+		text.Draw(screen, fmt.Sprintf("外回り線: %d分", g.outSum),mplusNormalFont, 20, 100, color.White)
+		text.Draw(screen, fmt.Sprintf("内回り線: %d分", g.inSum), mplusNormalFont, 20, 150, color.White)
+
+		if g.direction == 0 {
+			text.Draw(screen, "あなたが選んだのは外回り", mplusNormalFont, 20, 200, color.White)
+		} else {
+			text.Draw(screen, "あなたが選んだのは内回り", mplusNormalFont, 20, 200, color.White)
+		}
+		
+		correct := false
+		if g.outSum == g.inSum {
+			// 同じ場合
+			correct = true
+
+		} else if g.outSum > g.inSum {
+			// 正解が内回り
+			if g.direction == 0 {
+				correct = true
+			}
+		} else {
+			// 正解が外回り
+			if g.direction == 1 {
+				correct = true
+			}
+		}
+
+		if correct {
+			text.Draw(screen, "残念!", mplusNormalFont, 20, 300, color.White)
+
+		} else {
+			text.Draw(screen, "正解!", mplusNormalFont, 20, 300, color.White)
+		}
+
+		text.Draw(screen, "escキーで戻る",  mplusNormalFont, 50, 470, color.White)
+
 	case modeHelp:
 		op.GeoM.Translate(0, 0)
 		screen.DrawImage(yamanoteImg, op)
@@ -299,7 +353,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		op.GeoM.Translate(0, 200)
 		screen.DrawImage(trainImg, op)
 
-		text.Draw(screen, "hoge", mplusNormalFont, 0, 80, color.White)
 	}
 
 
@@ -312,6 +365,86 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		text.Draw(screen, strconv.Itoa(g.inSum), mplusNormalFont, 100, 80, color.White)
 		text.Draw(screen, strconv.Itoa(g.outSum),   mplusNormalFont, 100, 160, color.White)
 	}
+}
+
+func (g *Game) drawTitle(screen *ebiten.Image) {
+	text.Draw(screen, "山手線ゲーム",  mplusNormalFont, 80, 120, color.White)
+	text.Draw(screen, "spaceキーで始める",  mplusNormalFont, 80, 330, color.White)
+
+}
+
+func (g *Game) drawKanban(screen *ebiten.Image) {
+	op := &ebiten.DrawImageOptions{}
+	op.Filter = ebiten.FilterLinear
+
+	op.GeoM.Translate(0, 80)
+	screen.DrawImage(kanbanImg, op)
+
+	op.GeoM.Translate(170, 0)
+	screen.DrawImage(kanbanImg, op)
+}
+
+func (g *Game) drawStationNames(screen *ebiten.Image) {
+	text.Draw(screen, stations[g.from].Name, mplusNormalFont, 20, 120, color.Black)
+	text.Draw(screen, stations[g.to].Name,   mplusNormalFont, 200, 120, color.Black)
+}
+
+func (g *Game) drawTrain(screen *ebiten.Image) {
+	op := &ebiten.DrawImageOptions{}
+	op.Filter = ebiten.FilterLinear
+
+	if g.direction == 0 {
+		text.Draw(screen, "外回り", mplusNormalFont, 0, 370, color.White)
+
+		op.GeoM.Translate(float64(-100 + g.counter / 7), 230)
+		screen.DrawImage(trainImg, op)
+
+		op.GeoM.Translate(-100, 0)
+		screen.DrawImage(trainImg, op)
+
+		op.GeoM.Translate(-100, 0)
+		screen.DrawImage(trainImg, op)
+
+		op.GeoM.Translate(-100, 0)
+		screen.DrawImage(trainImg, op)
+
+	} else {
+		text.Draw(screen, "内回り", mplusNormalFont, 250, 370, color.White)
+
+		op.GeoM.Translate(float64(screenX - g.counter / 7), 280)
+		screen.DrawImage(trainImg, op)
+
+		op.GeoM.Translate(100, 0)
+		screen.DrawImage(trainImg, op)
+
+		op.GeoM.Translate(100, 0)
+		screen.DrawImage(trainImg, op)
+
+		op.GeoM.Translate(100, 0)
+		screen.DrawImage(trainImg, op)
+	}
+}
+
+func (g *Game) drawTrainRail(screen *ebiten.Image) {
+	op := &ebiten.DrawImageOptions{}
+	op.Filter = ebiten.FilterLinear
+	op.GeoM.Scale(1.2, 1.2)
+
+	op.GeoM.Translate(0, 250)
+	screen.DrawImage(trainRailImg, op)
+	
+	op.GeoM.Translate(0, 50)
+	screen.DrawImage(trainRailImg, op)
+}
+
+func (g *Game) drawReverse(screen *ebiten.Image) {
+	op := &ebiten.DrawImageOptions{}
+	op.Filter = ebiten.FilterLinear
+
+	scale := float64(-1 + (g.direction * 2))
+	op.GeoM.Scale(1, scale)
+	op.GeoM.Translate(100, float64(450 - (100 * g.direction)))
+	screen.DrawImage(reverceImg, op)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
